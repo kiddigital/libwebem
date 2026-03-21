@@ -510,8 +510,7 @@ void request_handler::handle_request(const request &req, reply &rep, modify_info
 	reply::add_header_content_type(&rep, mime_types::extension_to_type(extension));
 	reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
 	reply::add_header(&rep, "Access-Control-Allow-Origin", "*");
-	if (myWebem->m_settings.is_secure())
-		reply::add_security_headers(&rep);
+	reply::add_security_headers(&rep, myWebem->m_settings.is_secure());
 }
 
 bool request_handler::url_decode(const std::string& in, std::string& out)

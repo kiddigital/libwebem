@@ -716,8 +716,7 @@ namespace http {
 					reply::add_header(&rep, "Cache-Control", "max-age=3600, public");
 				}
 				reply::add_header_content_type(&rep, strMimeType);
-				if (m_settings.is_secure())
-					reply::add_security_headers(&rep);
+				reply::add_security_headers(&rep, m_settings.is_secure());
 				return true;
 			}
 
@@ -1310,7 +1309,7 @@ namespace http {
 
 			if (user.empty())
 			{
-				rep = reply::stock_reply(reply::unauthorized, m_settings.is_secure());
+				rep = reply::stock_reply(reply::unauthorized, true, m_settings.is_secure());
 				reply::add_cors_headers(&rep);
 				std::string szAuthHeader = "Basic realm=\"" + m_DigistRealm + "\"";
 				reply::add_header(&rep, "WWW-Authenticate", szAuthHeader);
@@ -1832,7 +1831,7 @@ namespace http {
 
 		void cWebemRequestHandler::send_authorization_request(reply& rep)
 		{
-			rep = reply::stock_reply(reply::unauthorized, myWebem->m_settings.is_secure());
+			rep = reply::stock_reply(reply::unauthorized, true, myWebem->m_settings.is_secure());
 			reply::add_cors_headers(&rep);
 			send_remove_cookie(rep);
 			if (myWebem->m_authmethod == AUTH_BASIC)
