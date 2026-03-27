@@ -7,6 +7,7 @@
 #include "session_store.h"
 #include "IWebServerLogger.h"
 #include "IWebsocketHandler.h"
+#include "ISseHandler.h"
 #include "session.h"
 #include <functional>
 #include <vector>
@@ -252,6 +253,21 @@ namespace http
 			/// Handler::Stop() is called on a background thread, never on the server io_context.
 			void ScheduleHandlerCleanup(std::shared_ptr<IWebsocketHandler> handler);
 
+			// SSE endpoint registry
+			void RegisterSseEndpoint(const std::string& path, SseHandlerFactory factory);
+			SseHandlerFactory GetSseFactory(const std::string& path) const;
+
+			/// Called internally when a new SSE handler is created.
+			void RegisterSseHandler(std::shared_ptr<ISseHandler> handler);
+
+			/// Iterate all active SSE handlers, pruning dead ones.
+			/// The callback is invoked outside the mutex lock to prevent deadlocks.
+			void ForEachSseHandler(std::function<void(ISseHandler*)> callback);
+
+			/// Schedule async cleanup of an SSE handler.
+			/// Handler::Stop() is called on a background thread, never on the server io_context.
+			void ScheduleSseHandlerCleanup(std::shared_ptr<ISseHandler> handler);
+
 			/// Register a URI substring pattern that forces no-cache response headers.
 			/// Any request whose URI contains this substring will receive
 			/// "Cache-Control: no-cache,must-revalidate" regardless of the file type.
@@ -296,6 +312,13 @@ namespace http
 				WebsocketHandlerFactory factory;
 			};
 			std::vector<WebsocketEndpoint> m_websocketEndpoints;
+
+			/// Registry of active SSE handlers (strong references; pruned by ForEachSseHandler).
+			std::vector<std::shared_ptr<ISseHandler>> m_sse_handlers;
+			std::mutex m_sse_handlers_mutex;
+
+			/// SSE endpoint factory registry, keyed by URL path.
+			std::map<std::string, SseHandlerFactory> m_sse_endpoints;
 
 			/// store map between include codes and application functions (20230525 No longer in use! Will be removed soon!)
 			// std::map<std::string, webem_include_function> myIncludes;

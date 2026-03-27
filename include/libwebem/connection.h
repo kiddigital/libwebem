@@ -20,6 +20,7 @@
 #include "request_parser.h"
 #include "Websockets.h"
 #include "IWebServerLogger.h"
+#include "ISseHandler.h"
 #ifdef WWW_ENABLE_SSL
 #include <boost/asio/ssl.hpp>
 typedef boost::asio::ssl::stream<boost::asio::ip::tcp::socket> ssl_socket;
@@ -199,9 +200,13 @@ namespace http {
 			enum class ConnectionType {
 				connection_http,
 				connection_websocket,
-				connection_websocket_closing
+				connection_websocket_closing,
+				connection_sse
 			};
 			ConnectionType connection_type;
+
+			/// Active SSE handler for this connection (set when connection_type == connection_sse).
+			std::shared_ptr<ISseHandler> sse_handler_;
 		};
 
 		typedef std::shared_ptr<connection> connection_ptr;

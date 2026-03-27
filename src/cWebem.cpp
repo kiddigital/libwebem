@@ -258,6 +258,90 @@ namespace http {
 			}
 		}
 
+		void cWebem::RegisterSseEndpoint(const std::string& path, SseHandlerFactory factory)
+		{
+			std::lock_guard<std::mutex> lock(m_configMutex);
+			m_sse_endpoints[path] = std::move(factory);
+		}
+
+		SseHandlerFactory cWebem::GetSseFactory(const std::string& path) const
+		{
+			std::lock_guard<std::mutex> lock(m_configMutex);
+			auto it = m_sse_endpoints.find(path);
+			if (it != m_sse_endpoints.end())
+				return it->second;
+			return nullptr;
+		}
+
+		void cWebem::RegisterSseHandler(std::shared_ptr<ISseHandler> handler)
+		{
+			std::lock_guard<std::mutex> lock(m_sse_handlers_mutex);
+			m_sse_handlers.erase(
+				std::remove_if(m_sse_handlers.begin(), m_sse_handlers.end(),
+					[](const std::shared_ptr<ISseHandler>& sp) { return !sp || !sp->IsAlive(); }),
+				m_sse_handlers.end());
+			m_sse_handlers.push_back(std::move(handler));
+		}
+
+		void cWebem::ForEachSseHandler(std::function<void(ISseHandler*)> callback)
+		{
+			std::vector<std::shared_ptr<ISseHandler>> live;
+			{
+				std::lock_guard<std::mutex> lock(m_sse_handlers_mutex);
+				auto it = m_sse_handlers.begin();
+				while (it != m_sse_handlers.end())
+				{
+					if (*it && (*it)->IsAlive())
+					{
+						live.push_back(*it);
+						++it;
+					}
+					else
+					{
+						it = m_sse_handlers.erase(it);
+					}
+				}
+			}
+			for (auto& sp : live)
+			{
+				callback(sp.get());
+			}
+		}
+
+		void cWebem::ScheduleSseHandlerCleanup(std::shared_ptr<ISseHandler> handler)
+		{
+			if (!handler)
+				return;
+			if (m_io_context.stopped())
+			{
+				if (m_logger)
+					m_logger->Debug(DebugCategory::WebServer, "SSE: io_context stopped, running handler cleanup inline");
+				try { handler->Stop(); } catch (...) {}
+				{
+					std::lock_guard<std::mutex> lock(m_sse_handlers_mutex);
+					m_sse_handlers.erase(
+						std::remove(m_sse_handlers.begin(), m_sse_handlers.end(), handler),
+						m_sse_handlers.end());
+				}
+				return;
+			}
+			if (m_logger)
+				m_logger->Debug(DebugCategory::WebServer, "SSE: scheduling async handler cleanup");
+			boost::asio::post(m_io_context, [this, handler = std::move(handler), logger = m_logger]() {
+				try {
+					handler->Stop();
+				}
+				catch (...) {
+					if (logger)
+						logger->Log(LogLevel::Error, "SSE: exception during async handler cleanup");
+				}
+				std::lock_guard<std::mutex> lock(m_sse_handlers_mutex);
+				m_sse_handlers.erase(
+					std::remove(m_sse_handlers.begin(), m_sse_handlers.end(), handler),
+					m_sse_handlers.end());
+			});
+		}
+
 		void cWebem::RegisterNoCachePattern(const std::string& pattern)
 		{
 			std::lock_guard<std::mutex> lock(m_configMutex);

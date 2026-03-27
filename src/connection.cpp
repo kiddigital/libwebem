@@ -144,6 +144,23 @@ namespace http {
 				}
 				break;
 			}
+			case ConnectionType::connection_sse:
+			{
+				if (sse_handler_)
+				{
+					auto* webem = request_handler_.Get_myWebem();
+					if (webem)
+					{
+						webem->ScheduleSseHandlerCleanup(std::move(sse_handler_));
+					}
+					else
+					{
+						try { sse_handler_->Stop(); } catch (...) {}
+					}
+					sse_handler_.reset();
+				}
+				break;
+			}
 			}
 			// Cancel timers
 			cancel_ws_session_renewal();
@@ -275,14 +292,26 @@ namespace http {
 			switch (connection_type) {
 			case ConnectionType::connection_http:
 			case ConnectionType::connection_websocket:
+			case ConnectionType::connection_sse:
 				// we dont send data anymore in websocket closing state
-				std::unique_lock<std::mutex> lock(writeMutex);
-				if (write_in_progress) {
-					// write in progress, add to queue
-					writeQ.push_back(buf);
-				}
-				else {
-					SocketWrite(buf);
+				{
+					std::unique_lock<std::mutex> lock(writeMutex);
+					// For SSE (HTTP/1.1 streaming), wrap payload in HTTP chunked encoding.
+					const std::string* sendPtr = &buf;
+					std::string chunked;
+					if (connection_type == ConnectionType::connection_sse) {
+						char hex[24];
+						snprintf(hex, sizeof(hex), "%zx", buf.size());
+						chunked = std::string(hex) + "\r\n" + buf + "\r\n";
+						sendPtr = &chunked;
+					}
+					if (write_in_progress) {
+						// write in progress, add to queue
+						writeQ.push_back(*sendPtr);
+					}
+					else {
+						SocketWrite(*sendPtr);
+					}
 				}
 				break;
 			}
@@ -534,6 +563,42 @@ namespace http {
 							websocket_parser.Start();
 							// todo: check if multiple connection from the same client in CONNECTING state?
 						}
+						else if (reply_.status == reply::sse_stream) {
+							// Send plain HTTP 200 SSE headers -- sse_stream is an internal sentinel
+							// and must never be serialised as a real HTTP status code.
+							static const std::string sse_headers =
+								"HTTP/1.1 200 OK\r\n"
+								"Content-Type: text/event-stream\r\n"
+								"Cache-Control: no-cache\r\n"
+								"Connection: keep-alive\r\n"
+								"Transfer-Encoding: chunked\r\n"
+								"X-Accel-Buffering: no\r\n"
+								"\r\n";
+							MyWrite(sse_headers);
+
+							connection_type = ConnectionType::connection_sse;
+							keepalive_ = true;
+
+							auto* webem = request_handler_.Get_myWebem();
+							if (webem)
+							{
+								std::string req_path = webem->ExtractRequestPath(request_.uri);
+								auto factory = webem->GetSseFactory(req_path);
+								if (factory)
+								{
+									std::weak_ptr<connection> weak_self = shared_from_this();
+									auto writer = [weak_self](const std::string& data) {
+										if (auto self = weak_self.lock())
+											self->MyWrite(data);
+									};
+									sse_handler_ = factory(writer, reply_.sse_session, reply_.sse_context);
+									webem->RegisterSseHandler(sse_handler_);
+									sse_handler_->Start();
+								}
+							}
+							// Do NOT call read_more() -- SSE is server-to-client only.
+							return;
+						}
 						else if (reply_.status == reply::download_file) {
 							std::string filename_attachment = reply_.content;
 							size_t npos = filename_attachment.find("\r\n");
@@ -644,6 +709,15 @@ namespace http {
 			}
 			else if (error)
 			{
+					if (connection_type == ConnectionType::connection_sse && sse_handler_)
+					{
+						auto* webem = request_handler_.Get_myWebem();
+						if (webem)
+							webem->ScheduleSseHandlerCleanup(std::move(sse_handler_));
+						else
+							try { sse_handler_->Stop(); } catch (...) {}
+						sse_handler_.reset();
+					}
 					connection_manager_.stop(shared_from_this());
 			}
 			else if (keepalive_)

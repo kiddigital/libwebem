@@ -28,6 +28,9 @@ struct reply
   {
 	switching_protocols = 101,
 	download_file = 102,
+	sse_stream = 103,      // Internal sentinel: connection handed off to SSE handler.
+	                       // This value is NEVER sent over the wire — the connection layer
+	                       // detects it and emits a plain HTTP 200 with SSE headers instead.
 
     ok = 200,
     created = 201,
@@ -62,6 +65,14 @@ struct reply
   /// Carries the fully-authenticated session so connection.cpp can pass it directly to the
   /// WebsocketHandlerFactory without re-parsing cookies.
   WebEmSession ws_session;
+
+  /// Populated by the page handler when the reply is an SSE stream (status==sse_stream).
+  /// Carries the authenticated session so connection.cpp can pass it to the SseHandlerFactory.
+  WebEmSession sse_session;
+
+  /// Carries auxiliary context (e.g., the MCP session ID) through to the SseHandlerFactory.
+  /// The page handler sets this string; connection.cpp forwards it verbatim.
+  std::string sse_context;
 
   /// Convert the reply into a vector of buffers. The buffers do not own the
   /// underlying memory blocks, therefore the reply object must remain valid and
