@@ -768,10 +768,12 @@ namespace http {
 				catch (std::exception& e)
 				{
 					if (m_logger) m_logger->Log(LogLevel::Error, "[web:%s] PO exception occurred : '%s'", GetPort().c_str(), e.what());
+					rep.status = reply::internal_server_error;
 				}
 				catch (...)
 				{
 					if (m_logger) m_logger->Log(LogLevel::Error, "[web:%s] PO unknown exception occurred", GetPort().c_str());
+					rep.status = reply::internal_server_error;
 				}
 				std::string attachment;
 				for (const auto &header : rep.headers)
